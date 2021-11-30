@@ -1,4 +1,5 @@
 import requests
+from re import search
 from suds.client import Client
 from flask import current_app
 
@@ -8,12 +9,12 @@ from lemur.plugins.bases import IssuerPlugin
 GLOBALSIGN_PRODUCTS = [ 
     'EV_SHA2', #ExtendedSSL
     'OV_SHA2', #OrganizationSSL
-    'DV_SHA2', #DomainSSL used in Email Order
-    'DV_HIGH_URL_SHA2', #DomainSSL used in HTTP Order
-    'DV_HIGH_DNS_SHA2', #DomainSSL uned in DNS Order
-    'DV_LOW_SHA2', #AlphaSSL used in Email Order
-    'DV_LOW_URL_SHA2', #AlphaSSL used in HTTP Order
-    'DV_LOW_DNS_SHA2' #AlphaSSL used in DNS Order
+    'DV_SHA2', #DomainSSL Email Order
+    'DV_HIGH_URL_SHA2', #DomainSSL HTTP Order
+    'DV_HIGH_DNS_SHA2', #DomainSSL DNS Order
+    'DV_LOW_SHA2', #AlphaSSL Email Order
+    'DV_LOW_URL_SHA2', #AlphaSSL HTTP Order
+    'DV_LOW_DNS_SHA2' #AlphaSSL DNS Order
 ]
 
 def build_globalsign_object(client, csr, issuer_options):
@@ -24,27 +25,69 @@ def build_globalsign_object(client, csr, issuer_options):
     
     Requesting a new globalsign certificate: {'destinations': [], 'key_type': 'ECCPRIME256V1', 'country': 'US', 'rotation': True, 'common_name': '*.gigenet.com', 'validity_end': <Arrow [2022-11-30T15:09:48.721000+00:00]>, 'description': 'GigeNET Wildcard', 'organizational_unit': 'IT', 'replaces': [], 'extensions': {'sub_alt_names': {'names': <SubjectAlternativeName(<GeneralNames([<DNSName(value='*.gigenet.com')>])>)>}, 'custom': [{'is_critical': False, 'oid': 'ProductCode', 'encoding': 'string', 'value': 'DV_LOW_DNS_SHA2'}, {'is_critical': False, 'oid': 'BaseOption', 'encoding': 'string', 'value': 'wildcard'}]}, 'rotation_policy': RotationPolicy(days=30, name=default), 'location': 'Arlighton Heights', 'authority': Authority(name=GlobalSign), 'notifications': [Notification(label=DEFAULT_SUPPORT_30_DAY), Notification(label=DEFAULT_SUPPORT_15_DAY), Notification(label=DEFAULT_SUPPORT_2_DAY)], 'roles': [], 'validity_start': <Arrow [2021-11-30T15:09:48.721000+00:00]>, 'dns_provider': None, 'validity_years': None, 'state': 'IL', 'replacements': [], 'organization': 'GigeNET', 'owner': 'support@gigenet.com', 'creator': User(username=lemur)}'''
 
-    product_code = 'DV_LOW_DNS_SHA2'
-    if issuer_options['custom']['ProductCode']:
-        if issuer_options['custom']['ProductCode'] in GLOBALSIGN_PRODUCTS:
-            product_code = issuer_options['custom']['ProductCode']
+    order_kind = 'new'
+    if 'OrderKind' in issuer_options['extensions']['custom']:
+        if issuer_options['extensions']['custom']['OrderKind'].lower() in ['new', 'renewal', 'transfer ']:
+            order_kind = issuer_options['extensions']['custom']['OrderKind']
         else:
-            raise Exception("Unsupported product code.")
+             raise Exception("Unsupported order kind in custom options. Expected these values: new, renewal, or transfer.")
+
+    product_code = 'DV_LOW_SHA2'
+    if 'ProductCode' in issuer_options['extensions']['custom']:
+        if issuer_options['extensions']['custom']['ProductCode'].upper() in GLOBALSIGN_PRODUCTS:
+            product_code = issuer_options['extensions']['custom']['ProductCode']
+        else:
+            raise Exception("Unsupported product code in custum options. Please see API documentation for product codes.")
 
     base_option = None
-    if issuer_options['custom']['BaseOption']:
-        if issuer_options['custom']['BaseOption'].lower() in ['wildcard', 'gip]':
-            base_option = issuer_options['custom']['BaseOption']
+    if 'BaseOption' in issuer_options['extensions']['custom']:
+        if issuer_options['extensions']['custom']['BaseOption'].lower() in ['wildcard', 'gip']:
+            base_option = issuer_options['extensions']['custom']['BaseOption']
         else:
-            raise Exception("Unsupported base option, expected wildcard/GIP.")
+            raise Exception("Unsupported extra base option in custom options. Expected these values: wildcard or GIP.")
 
-    order_kind = 'new'
-    if issuer_options['custom']['OrderKind']:
-        if issuer_options['custom']['OrderKind'] in ['new', 'renewal', 'transfer ']:
-            order_kind = issuer_options['custom']['OrderKind']
+    product_type = None
+    product_function_name = None
+
+    '''
+    No current use for Extended or Organization validated SSL's
+    # if search('EV_' , product_code): 
+    #    product_type = 'QbV1EVOrderRequest'
+    #elif search('OV_' , product_code):
+    #    product_type = 'QbV1OVOrderRequest'
+    '''
+
+    if search('DV_' , product_code):
+        if search('URL' , product_code):
+            product_type = 'QbV1UrlVerificationRequest'
+            product_function_name = 'URLVerification'
+        elif search('DNS' , product_code):
+            product_type = 'QbV1DvDnsOrderRequest'
+            product_function_name = 'DVDNSOrder'
         else:
-             raise Exception("Unsupported order type, expected new/renewal/transfer.")
+            product_type = 'QbV1DvOrderRequest'
+            product_function_name = 'DVOrder'
+    else:
+        raise Exception("Unsupported Domain Product type.")
 
+    globalsign_obj = client.factory.create(product_type)
+
+    globalsign_obj.OrderRequestHeader.AuthToken['UserName'] = current_app.config.get("GLOBALSIGN_API_USERNAME")
+    globalsign_obj.OrderRequestHeader.AuthToken['Password'] = current_app.config.get("GLOBALSIGN_API_PASSWORD")
+    globalsign_obj.OrderRequestParameter['ProductCode'] = product_code
+    globalsign_obj.OrderRequestParameter['OrderKind'] = order_kind
+    globalsign_obj.OrderRequestParameter['Licenses'] = 1
+    globalsign_obj.OrderRequestParameter.ValidityPeriod['Months'] = 12 #GlobalSign Will only issue 1 Year SSL's.
+    globalsign_obj.OrderRequestParameter['CSR'] = csr
+    globalsign_obj.ContactInfo['Email'] = issuer_options['owner']
+    
+    #DNS needs ApproverEmail
+
+    current_app.logger.info(
+        "GlobalSign Object: {0}".format(globalsign_obj)
+    )
+
+    return product_function_name, globalsign_obj
 
 class GlobalSignIssuerPlugin(IssuerPlugin):
     title = "GlobalSign"
@@ -73,17 +116,16 @@ class GlobalSignIssuerPlugin(IssuerPlugin):
         password =  current_app.config.get("GLOBALSIGN_API_PASSWORD")
 
         client = Client(url, username=username, password=password)  
-        globalsign_data = build_globalsign_object(client, csr, issuer_options)
+        function_name, globalsign_data = build_globalsign_object(client, csr, issuer_options)
+
+        method = getattr(client.service, function_name)
+        request = method(globalsign_data)
 
         current_app.logger.info(
-            "Requesting a new globalsign certificate: {0}".format(csr)
-        )
-        current_app.logger.info(
-            "Requesting a new globalsign certificate: {0}".format(issuer_options)
+            "Requesting a new globalsign certificate: {0}".format(request)
         )
 
-        #return None, None, random.randrange(100000, 9999999)
-        #test, current_app.config.get("GLOBALSIGN_INTERMEDIATE"), random.randrange(100000, 9999999)
+        #return None, None, "globalSign Tractions ID"
 
     def get_ordered_certificate(self, cert):
         """ Retrieve a certificate via order id """
