@@ -143,7 +143,7 @@ def globalsign_build_order(client, csr, issuer_options):
 
     return product_function_name, globalsign_obj
 
-def globalsign_get_order_information(orderID):
+def globalsign_get_order_information(cn, external_id):
     """
     Get the GlobalSign order information.
     :param orderID:
@@ -159,12 +159,43 @@ def globalsign_get_order_information(orderID):
     order = client.factory.create('QbV1GetOrderByOrderIdRequest')
     order.QueryRequestHeader.AuthToken['UserName'] = username
     order.QueryRequestHeader.AuthToken['Password'] = password
-    order.OrderID = orderID 
+    order.OrderID = external_id 
+    order.OrderQueryOption.ReturnFulfillment = 'true'
+    order.OrderQueryOption.ReturnCACerts = 'true'
 
     request = client.service.GetOrderByOrderID(order)
 
-    if  request.OrderResponseHeader.SuccessCode != '0':
+    if  request.OrderResponseHeader.SuccessCode != 0:
         raise Exception(GLOBALSIGN_ERRORS[request.OrderResponseHeader.Errors.Error[-1]['ErrorCode']])
+
+    if int(request.OrderDetail.OrderInfo.OrderStatus) == 1:
+        '''
+        url = "{0}/kb/ws/v1/ServerSSLService?wsdl".format(current_app.config.get("GLOBALSIGN_API_URL") )
+
+        client = Client(url, username=username, password=password)  
+
+        verify_ssl = client.factory.create('QbV1DnsVerificationForIssueRequest')
+        verify_ssl.OrderRequestHeader.AuthToken['UserName'] = username
+        verify_ssl.OrderRequestHeader.AuthToken['Password'] = password
+        verify_ssl.ApproverFQDN = cn
+        verify_ssl.OrderID = external_id
+
+        request = client.service.DVDNSVerificationForIssue(verify)
+        '''
+        pass
+    elif int(request.OrderDetail.OrderInfo.OrderStatus) == 4:
+
+        intermediate = None
+        for CACert in request.OrderDetail.Fulfillment.CACertificates.CACertificate:
+            if CACert.CACertType == "INTER":
+                intermediate = CACert.CACert
+    
+        certificate =request.OrderDetail.Fulfillment.ServerCertificate.X509Cert
+
+        return certificate, intermediate
+
+    else:
+        raise Exception("The order status was cancelled, revoked, or removed outside of automation.  This process will not complete without manual intervention.")
 
 def globalsign_modify_order(orderID, action):
     """
@@ -228,11 +259,21 @@ class GlobalSignIssuerPlugin(IssuerPlugin):
     def get_ordered_certificate(self, pending_cert):
         """ Retrieve a certificate via order id """
 
-        current_app.logger.info(
-            "Requesting PEM from pending globalsign certificate: {0}".format(pending_cert)
-        )
+        certificate, intermediate= globalsign_get_order_information(pending_cert.cn, pending_cert.external_id)
 
-        globalsign_get_order_information(pending_cert.external_id)
+        if certificate and intermediate:
+
+            current_app.logger.info(
+                "Completing globalsign certificate order: {0}".format(pending_cert.external_id)
+            )
+
+            data = {
+                "body": certificate,
+                "chain": intermediate,
+                "external_id": pending_cert.external_id
+            }
+
+            return data
         
     def revoke_certificate(self, certificate, reason):
         """
