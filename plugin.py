@@ -82,25 +82,32 @@ def globalsign_build_order(client, csr, issuer_options):
     """
 
     order_kind = 'new'
-    if 'OrderKind' in issuer_options['extensions']['custom']:
-        if issuer_options['extensions']['custom']['OrderKind'].lower() in ['new', 'renewal', 'transfer ']:
-            order_kind = issuer_options['extensions']['custom']['OrderKind']
-        else:
-             raise Exception("Unsupported order kind in custom options. Expected these values: new, renewal, or transfer.")
-
-    product_code = 'DV_LOW_DNS_SHA2'
-    if 'ProductCode' in issuer_options['extensions']['custom']:
-        if issuer_options['extensions']['custom']['ProductCode'].upper() in GLOBALSIGN_PRODUCTS:
-            product_code = issuer_options['extensions']['custom']['ProductCode']
-        else:
-            raise Exception("Unsupported product code in custum options. Please see API documentation for product codes.")
-
+    product_code = 'DV_LOW_SHA2'
     base_option = None
-    if 'BaseOption' in issuer_options['extensions']['custom']:
-        if issuer_options['extensions']['custom']['BaseOption'].lower() in ['wildcard', 'gip']:
-            base_option = issuer_options['extensions']['custom']['BaseOption']
-        else:
-            raise Exception("Unsupported extra base option in custom options. Expected these values: wildcard or GIP.")
+    approval_email = None
+
+    for v in issuer_options['extensions']['custom']:
+
+        if v['oid'] == 'OrderKind':
+            if v['value'].lower() in ['new', 'renewal', 'transfer ']:
+                order_kind = v['value'].lower()
+            else:
+                raise Exception("Unsupported order kind in custom options. Expected these values: new, renewal, or transfer.")
+
+        if v['oid'] == 'ProductCode':
+            if v['value'].upper() in GLOBALSIGN_PRODUCTS:
+                product_code = v['value'].upper()
+            else:
+                raise Exception("Unsupported product code in custum options. Please see API documentation for product codes.")
+
+        if v['oid'] == 'BaseOption':
+            if v['value'].lower() in ['wildcard', 'gip']:
+                base_option = v['value']
+            else:
+                raise Exception("Unsupported extra base option in custom options. Expected these values: wildcard or GIP.")
+
+        if v['oid'] == 'ApproverEmail':
+            approval_email = v['value']
 
     product_type = None
     product_function_name = None
@@ -115,6 +122,25 @@ def globalsign_build_order(client, csr, issuer_options):
         else:
             product_type = 'QbV1DvOrderRequest'
             product_function_name = 'DVOrder'
+
+            valid_email = False
+            if approval_email:
+                dva_object = client.factory.create('ns0:QbV1GetDVApproverListRequest')
+                dva_object.QueryRequestHeader.AuthToken['UserName'] = current_app.config.get("GLOBALSIGN_API_USERNAME")
+                dva_object.QueryRequestHeader.AuthToken['Password'] = current_app.config.get("GLOBALSIGN_API_PASSWORD")
+                dva_object.FQDN = issuer_options['common_name']
+                dv_approval = client.service.GetDVApproverList(dva_object)
+
+                for email in dv_approval.Approvers.SearchOrderDetail:
+                    if email['ApproverEmail'] == approval_email:
+                        valid_email = True
+
+            if not approval_email:
+                raise Exception("Product type needs an E-mail for approvals.")
+
+            if not valid_email:
+                 raise Exception("Product type needs an GlobalSign approved E-mail for approvals.")
+
     else:
         raise Exception("Unsupported GlobalSign Product.")
 
@@ -125,6 +151,9 @@ def globalsign_build_order(client, csr, issuer_options):
     globalsign_obj.OrderRequestParameter['ProductCode'] = product_code
     if base_option:
         globalsign_obj.OrderRequestParameter['BaseOption']  = base_option
+    if valid_email:
+        globalsign_obj['ApproverEmail']  = approval_email
+        globalsign_obj['OrderID'] = dv_approval['OrderID']
     globalsign_obj.OrderRequestParameter['OrderKind'] = order_kind
     globalsign_obj.OrderRequestParameter['Licenses'] = 1
     globalsign_obj.OrderRequestParameter.ValidityPeriod['Months'] = 12 #GlobalSign Will only issue 1 Year SSL's.
@@ -133,13 +162,10 @@ def globalsign_build_order(client, csr, issuer_options):
     globalsign_obj.ContactInfo['LastName'] = current_app.config.get("GLOBALSIGN_LASTNAME")
     globalsign_obj.ContactInfo['Phone'] = current_app.config.get("GLOBALSIGN_PHONE")
     globalsign_obj.ContactInfo['Email'] = issuer_options['owner']
-    
-    #DNS needs ApproverEmail
-    #DNS needs OrderID
 
-    #current_app.logger.info(
-    #    "GlobalSign Object: {0}".format(globalsign_obj)
-    #)
+    current_app.logger.info(
+        "GlobalSign Object: {0}".format(globalsign_obj)
+    )
 
     return product_function_name, globalsign_obj
 
