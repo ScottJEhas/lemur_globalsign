@@ -1,0 +1,12 @@
+--- setup.py	2022-01-06 15:18:52.000000000 -0600
++++ setup.py.new	2022-01-11 09:04:09.077839034 -0600
+@@ -158,7 +158,8 @@
+             'adcs_source = lemur.plugins.lemur_adcs.plugin:ADCSSourcePlugin',
+             'entrust_issuer = lemur.plugins.lemur_entrust.plugin:EntrustIssuerPlugin',
+             'entrust_source = lemur.plugins.lemur_entrust.plugin:EntrustSourcePlugin',
+-            'azure_destination = lemur.plugins.lemur_azure_dest.plugin:AzureDestinationPlugin'
++            'azure_destination = lemur.plugins.lemur_azure_dest.plugin:AzureDestinationPlugin',
++            'globalsign_issuer = lemur.plugins.lemur_globalsign.plugin:GlobalSignIssuerPlugin'
+         ],
+     },
+     classifiers=[

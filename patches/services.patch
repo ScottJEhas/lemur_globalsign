@@ -1,0 +1,10 @@
+--- services.js.old	2022-01-26 09:17:43.000000000 -0500
++++ services.js	2022-01-26 09:18:00.000000000 -0500
+@@ -302,6 +302,7 @@
+ 
+         // pre-select validity type radio button to default days
+         certificate.validityType = 'defaultDays';
++	certificate.wildcard = 'false';
+ 
+         if (certificate.dnsProviderId) {
+           certificate.dnsProvider = {id: certificate.dnsProviderId};

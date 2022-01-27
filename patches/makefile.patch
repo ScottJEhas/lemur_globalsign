@@ -1,0 +1,12 @@
+--- Makefile	2022-01-11 08:58:41.063406600 -0600
++++ Makefile.new	2022-01-11 09:00:21.131453736 -0600
+@@ -109,9 +109,6 @@
+ 	python setup.py sdist bdist_wheel upload
+
+ up-reqs:
+-ifndef VIRTUAL_ENV
+-    $(error Please activate virtualenv first)
+-endif
+ 	@echo "--> Updating Python requirements"
+ 	pip install --upgrade pip
+ 	pip install --upgrade pip-tools
