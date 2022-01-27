@@ -1,7 +1,7 @@
 import re, json
 from suds.client import Client
 from lemur.dns_providers import service as dns_provider_service
-from lemur.plugins.lemur_globalsign import powerdns
+from lemur.plugins.lemur_acme import powerdns
 from lemur.logs import service as log_service
 from flask import current_app
 
